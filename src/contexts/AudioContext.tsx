@@ -9,6 +9,9 @@ export interface AudioRecording {
   audioUrl: string;
   waveform: number[];
   modelUsed: string;
+  probabilities?: number[];
+  fileName?: string;
+  fileSize?: number;
 }
 
 export interface DatasetFile {

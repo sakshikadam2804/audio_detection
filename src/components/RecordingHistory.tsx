@@ -10,6 +10,9 @@ interface Recording {
   audioUrl: string;
   waveform: number[];
   modelUsed: string;
+  probabilities?: number[];
+  fileName?: string;
+  fileSize?: number;
 }
 
 interface RecordingHistoryProps {
@@ -28,6 +31,25 @@ export default function RecordingHistory({
   const [selectedRecording, setSelectedRecording] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'timestamp' | 'emotion' | 'confidence'>('timestamp');
 
+  const exportData = () => {
+    const dataToExport = recordings.map(recording => ({
+      timestamp: new Date(recording.timestamp).toISOString(),
+      emotion: recording.emotion,
+      confidence: recording.confidence,
+      duration: recording.duration,
+      modelUsed: recording.modelUsed,
+      fileName: recording.fileName || 'recorded_audio',
+      probabilities: recording.probabilities
+    }));
+
+    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `emotion_analysis_export_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const emotionColors: Record<string, string> = {
     happy: 'text-green-400 bg-green-500/10',
     sad: 'text-blue-400 bg-blue-500/10',
@@ -81,6 +103,13 @@ export default function RecordingHistory({
         <h2 className="text-xl font-bold text-white flex items-center space-x-2">
           <History className="text-amber-500" size={24} />
           <span>Recording History</span>
+          <button
+            onClick={exportData}
+            className="ml-auto px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
+            disabled={recordings.length === 0}
+          >
+            Export Data
+          </button>
         </h2>
         <div className="flex items-center space-x-2">
           <select
@@ -131,6 +160,11 @@ export default function RecordingHistory({
                       <span className="text-gray-400 text-sm">
                         {(recording.confidence * 100).toFixed(1)}% confidence
                       </span>
+                      {recording.fileName && (
+                        <span className="text-gray-500 text-xs">
+                          {recording.fileName}
+                        </span>
+                      )}
                     </div>
                     
                     <div className="flex items-center space-x-4 text-sm text-gray-400">
@@ -187,10 +221,28 @@ export default function RecordingHistory({
                     <div>
                       <span className="text-gray-400">File Size:</span>
                       <span className="text-white ml-2">
-                        {(recording.duration * 44100 * 2 / 1024).toFixed(1)} KB
+                        {recording.fileSize 
+                          ? `${(recording.fileSize / 1024).toFixed(1)} KB`
+                          : `${(recording.duration * 44100 * 2 / 1024).toFixed(1)} KB`
+                        }
                       </span>
                     </div>
                   </div>
+                  
+                  {/* Emotion Probabilities */}
+                  {recording.probabilities && (
+                    <div className="mt-3">
+                      <span className="text-gray-400 text-sm">Emotion Probabilities:</span>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        {['neutral', 'calm', 'happy', 'sad', 'angry', 'fearful', 'disgust', 'surprised'].map((emotion, index) => (
+                          <div key={emotion} className="flex justify-between">
+                            <span className="text-gray-300 capitalize">{emotion}:</span>
+                            <span className="text-gray-400">{(recording.probabilities![index] * 100).toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="mt-3">
                     <span className="text-gray-400 text-sm">Full Waveform:</span>

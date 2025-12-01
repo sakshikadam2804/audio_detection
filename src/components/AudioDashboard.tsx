@@ -4,6 +4,7 @@ import EmotionDisplay from './EmotionDisplay';
 import DatasetUpload from './DatasetUpload';
 import RecordingHistory from './RecordingHistory';
 import ModelInfo from './ModelInfo';
+import AudioFileUpload from './AudioFileUpload';
 import { useAudio } from '../contexts/AudioContext';
 
 export default function AudioDashboard() {
@@ -31,9 +32,10 @@ export default function AudioDashboard() {
       {/* Real-time Emotion Display */}
       <EmotionDisplay />
       
-      {/* Audio Recording and Dataset Upload */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      {/* Audio Recording, File Upload, and Dataset Upload */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <AudioRecorder onRecordingComplete={addRecording} />
+        <AudioFileUpload onPredictionComplete={addRecording} />
         <DatasetUpload onDatasetUploaded={setDatasetFiles} />
       </div>
 

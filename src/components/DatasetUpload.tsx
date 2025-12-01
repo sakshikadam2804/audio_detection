@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, Folder, FileAudio, CheckCircle, AlertCircle, Database } from 'lucide-react';
+import { AudioProcessor } from '../utils/audioProcessor';
+import { EmotionModel } from '../utils/emotionModel';
 
 interface DatasetFile {
   name: string;
@@ -20,7 +22,11 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadedFiles, setUploadedFiles] = useState<DatasetFile[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isTraining, setIsTraining] = useState(false);
+  const [trainingProgress, setTrainingProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioProcessor = new AudioProcessor();
+  const emotionModel = new EmotionModel();
 
   // RAVDESS emotion mapping
   const emotionMap: Record<string, string> = {
@@ -61,6 +67,35 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
     return {};
   };
 
+  const processAudioFile = async (file: File): Promise<number[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          
+          // Extract features
+          const mfccFeatures = await audioProcessor.extractMFCC(audioBuffer);
+          const spectralFeatures = audioProcessor.extractSpectralFeatures(audioBuffer);
+          const prosodicFeatures = audioProcessor.extractProsodicFeatures(audioBuffer);
+          
+          // Average MFCC features across time
+          const avgMFCC = mfccFeatures[0].map((_, i) => 
+            mfccFeatures.reduce((sum, frame) => sum + frame[i], 0) / mfccFeatures.length
+          );
+          
+          // Combine all features
+          const combinedFeatures = [...spectralFeatures, ...prosodicFeatures, ...avgMFCC];
+          resolve(combinedFeatures);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  };
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -69,6 +104,7 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
     setUploadProgress(0);
 
     const processedFiles: DatasetFile[] = [];
+    const trainingData: { features: number[]; emotion: string }[] = [];
     const totalFiles = files.length;
 
     for (let i = 0; i < files.length; i++) {
@@ -91,6 +127,19 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         };
 
         processedFiles.push(datasetFile);
+        
+        // Process audio for training if it's a valid emotion
+        if (parsedData.emotion && parsedData.emotion !== 'unknown') {
+          try {
+            const features = await processAudioFile(file);
+            trainingData.push({
+              features,
+              emotion: parsedData.emotion
+            });
+          } catch (error) {
+            console.error('Error processing audio file:', file.name, error);
+          }
+        }
       }
 
       setUploadProgress(((i + 1) / totalFiles) * 100);
@@ -100,6 +149,27 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
       setUploadedFiles(processedFiles);
       setUploadStatus('success');
       onDatasetUploaded(processedFiles);
+      
+      // Start training the model
+      if (trainingData.length > 0) {
+        setIsTraining(true);
+        setTrainingProgress(0);
+        
+        try {
+          await emotionModel.trainModel(trainingData);
+          setIsTraining(false);
+          setTrainingProgress(100);
+          
+          // Save trained model to localStorage
+          localStorage.setItem('emotionModel', JSON.stringify(emotionModel.exportModel()));
+          
+          alert(`Model training completed! Trained on ${trainingData.length} audio samples.`);
+        } catch (error) {
+          console.error('Training error:', error);
+          setIsTraining(false);
+          alert('Model training failed. Using rule-based prediction.');
+        }
+      }
     } else {
       setUploadStatus('error');
     }
@@ -152,7 +222,7 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         <div
           onClick={handleFolderUpload}
           className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-            uploadStatus === 'uploading'
+            uploadStatus === 'uploading' || isTraining
               ? 'border-blue-500 bg-blue-500/10'
               : uploadStatus === 'success'
               ? 'border-green-500 bg-green-500/10'
@@ -162,7 +232,7 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
           }`}
         >
           <div className="flex flex-col items-center space-y-3">
-            {uploadStatus === 'uploading' ? (
+            {uploadStatus === 'uploading' || isTraining ? (
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
             ) : uploadStatus === 'success' ? (
               <CheckCircle className="text-green-500" size={48} />
@@ -174,7 +244,9 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
 
             <div>
               <p className="text-white font-medium">
-                {uploadStatus === 'uploading'
+                {isTraining
+                  ? 'Training Model...'
+                  : uploadStatus === 'uploading'
                   ? 'Processing Dataset...'
                   : uploadStatus === 'success'
                   ? 'Dataset Uploaded Successfully!'
@@ -184,7 +256,8 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
               </p>
               <p className="text-gray-400 text-sm mt-1">
                 {uploadStatus === 'idle' && 'Select the RAVDESS folder containing Actor_01 to Actor_24 subfolders'}
-                {uploadStatus === 'uploading' && `Progress: ${uploadProgress.toFixed(0)}%`}
+                {isTraining && `Training Progress: ${trainingProgress.toFixed(0)}%`}
+                {uploadStatus === 'uploading' && !isTraining && `Processing: ${uploadProgress.toFixed(0)}%`}
                 {uploadStatus === 'success' && `${uploadedFiles.length} audio files processed`}
                 {uploadStatus === 'error' && 'Please select a valid RAVDESS dataset folder'}
               </p>
@@ -193,11 +266,11 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         </div>
 
         {/* Upload Progress */}
-        {uploadStatus === 'uploading' && (
+        {(uploadStatus === 'uploading' || isTraining) && (
           <div className="w-full bg-gray-700 rounded-full h-2">
             <div
               className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${uploadProgress}%` }}
+              style={{ width: `${isTraining ? trainingProgress : uploadProgress}%` }}
             ></div>
           </div>
         )}
@@ -242,8 +315,8 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
             <p className="text-blue-400 text-sm">
               <strong>Dataset Ready:</strong> {uploadedFiles.length} audio files from {getActorStats().length} actors 
-              covering {getEmotionStats().length} different emotions. The system can now use this data for training 
-              and validation.
+              covering {getEmotionStats().length} different emotions. 
+              {isTraining ? ' Model is currently training...' : ' Model training completed!'}
             </p>
           </div>
         </div>

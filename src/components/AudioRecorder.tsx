@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Mic, MicOff, Square } from 'lucide-react';
 import { useAudio } from '../contexts/AudioContext';
+import { AudioProcessor } from '../utils/audioProcessor';
+import { EmotionModel } from '../utils/emotionModel';
 
 interface AudioRecorderProps {
   onRecordingComplete: (recording: any) => void;
@@ -11,6 +13,20 @@ export default function AudioRecorder({ onRecordingComplete }: AudioRecorderProp
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
   const [recordingDuration, setRecordingDuration] = useState<number>(0);
+  const [audioProcessor] = useState(new AudioProcessor());
+  const [emotionModel] = useState(() => {
+    const model = new EmotionModel();
+    // Try to load trained model from localStorage
+    const savedModel = localStorage.getItem('emotionModel');
+    if (savedModel) {
+      try {
+        model.importModel(JSON.parse(savedModel));
+      } catch (error) {
+        console.error('Error loading saved model:', error);
+      }
+    }
+    return model;
+  });
 
   React.useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -22,32 +38,36 @@ export default function AudioRecorder({ onRecordingComplete }: AudioRecorderProp
     return () => clearInterval(interval);
   }, [isRecording, recordingStartTime]);
 
-  const getEmotionPrediction = () => {
-    const emotions = [
-      { name: 'neutral', weight: 25 },
-      { name: 'calm', weight: 20 },
-      { name: 'happy', weight: 15 },
-      { name: 'sad', weight: 12 },
-      { name: 'angry', weight: 8 },
-      { name: 'fearful', weight: 6 },
-      { name: 'disgust', weight: 5 },
-      { name: 'surprised', weight: 9 }
-    ];
-    
-    const totalWeight = emotions.reduce((sum, emotion) => sum + emotion.weight, 0);
-    let random = Math.random() * totalWeight;
-    
-    for (const emotion of emotions) {
-      random -= emotion.weight;
-      if (random <= 0) {
-        return {
-          emotion: emotion.name,
-          confidence: 0.65 + Math.random() * 0.3
-        };
-      }
+  const getEmotionPrediction = async (audioBlob: Blob): Promise<{ emotion: string; confidence: number; probabilities: number[] }> => {
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      
+      // Extract features
+      const mfccFeatures = await audioProcessor.extractMFCC(audioBuffer);
+      const spectralFeatures = audioProcessor.extractSpectralFeatures(audioBuffer);
+      const prosodicFeatures = audioProcessor.extractProsodicFeatures(audioBuffer);
+      
+      // Average MFCC features across time
+      const avgMFCC = mfccFeatures[0] ? mfccFeatures[0].map((_, i) => 
+        mfccFeatures.reduce((sum, frame) => sum + frame[i], 0) / mfccFeatures.length
+      ) : Array(13).fill(0);
+      
+      // Combine all features
+      const combinedFeatures = [...spectralFeatures, ...prosodicFeatures, ...avgMFCC];
+      
+      // Predict emotion using the trained model
+      return emotionModel.predict(combinedFeatures);
+    } catch (error) {
+      console.error('Error in emotion prediction:', error);
+      // Fallback to neutral emotion
+      return { 
+        emotion: 'neutral', 
+        confidence: 0.5,
+        probabilities: [0.5, 0.1, 0.1, 0.1, 0.1, 0.05, 0.025, 0.025]
+      };
     }
-    
-    return { emotion: 'neutral', confidence: 0.8 };
   };
 
   const startAudioRecording = async () => {
@@ -60,12 +80,12 @@ export default function AudioRecorder({ onRecordingComplete }: AudioRecorderProp
         chunks.push(event.data);
       };
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const blob = new Blob(chunks, { type: 'audio/wav' });
         const audioUrl = URL.createObjectURL(blob);
         const duration = (Date.now() - recordingStartTime) / 1000;
         
-        const prediction = getEmotionPrediction();
+        const prediction = await getEmotionPrediction(blob);
         
         const waveform = Array.from({ length: 100 }, (_, i) => {
           const baseAmplitude = Math.sin(i * 0.1) * 0.5 + 0.5;
@@ -81,7 +101,8 @@ export default function AudioRecorder({ onRecordingComplete }: AudioRecorderProp
           confidence: prediction.confidence,
           audioUrl,
           waveform,
-          modelUsed: 'EmotiNet-RAVDESS v2.1.0'
+          modelUsed: emotionModel.getModelInfo().name + ' ' + emotionModel.getModelInfo().version,
+          probabilities: prediction.probabilities
         };
 
         onRecordingComplete(recording);
