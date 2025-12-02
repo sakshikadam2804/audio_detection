@@ -74,12 +74,24 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         try {
           const arrayBuffer = e.target?.result as ArrayBuffer;
           const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+          
+          // Limit audio buffer size for performance
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
           
+          // If audio is too long, take only first 5 seconds
+          let processBuffer = audioBuffer;
+          if (audioBuffer.duration > 5) {
+            const frameCount = Math.floor(5 * audioBuffer.sampleRate);
+            const newBuffer = audioContext.createBuffer(1, frameCount, audioBuffer.sampleRate);
+            const channelData = audioBuffer.getChannelData(0);
+            newBuffer.copyToChannel(channelData.slice(0, frameCount), 0);
+            processBuffer = newBuffer;
+          }
+          
           // Extract features
-          const mfccFeatures = await audioProcessor.extractMFCC(audioBuffer);
-          const spectralFeatures = audioProcessor.extractSpectralFeatures(audioBuffer);
-          const prosodicFeatures = audioProcessor.extractProsodicFeatures(audioBuffer);
+          const mfccFeatures = await audioProcessor.extractMFCC(processBuffer);
+          const spectralFeatures = audioProcessor.extractSpectralFeatures(processBuffer);
+          const prosodicFeatures = audioProcessor.extractProsodicFeatures(processBuffer);
           
           // Average MFCC features across time
           const avgMFCC = mfccFeatures[0].map((_, i) => 
@@ -106,8 +118,9 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
     const processedFiles: DatasetFile[] = [];
     const trainingData: { features: number[]; emotion: string }[] = [];
     const totalFiles = files.length;
+    const maxFiles = Math.min(50, totalFiles); // Limit to 50 files for demo
 
-    for (let i = 0; i < files.length; i++) {
+    for (let i = 0; i < maxFiles; i++) {
       const file = files[i];
       
       // Check if it's an audio file
@@ -131,6 +144,10 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         // Process audio for training if it's a valid emotion
         if (parsedData.emotion && parsedData.emotion !== 'unknown') {
           try {
+            // Add delay between file processing
+            if (i % 5 === 0) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
             const features = await processAudioFile(file);
             trainingData.push({
               features,
@@ -142,7 +159,7 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
         }
       }
 
-      setUploadProgress(((i + 1) / totalFiles) * 100);
+      setUploadProgress(((i + 1) / maxFiles) * 100);
     }
 
     if (processedFiles.length > 0) {
@@ -154,6 +171,9 @@ export default function DatasetUpload({ onDatasetUploaded }: DatasetUploadProps)
       if (trainingData.length > 0) {
         setIsTraining(true);
         setTrainingProgress(0);
+        
+        // Add delay before training
+        await new Promise(resolve => setTimeout(resolve, 500));
         
         try {
           await emotionModel.trainModel(trainingData);

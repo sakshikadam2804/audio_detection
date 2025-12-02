@@ -42,7 +42,7 @@ export class EmotionModel {
   async trainModel(trainingData: { features: number[]; emotion: string }[]): Promise<void> {
     console.log('Starting model training with', trainingData.length, 'samples...');
     
-    const epochs = 100;
+    const epochs = 20; // Reduced epochs for faster training
     const learningRate = 0.01;
     
     for (let epoch = 0; epoch < epochs; epoch++) {
@@ -51,7 +51,14 @@ export class EmotionModel {
       // Shuffle training data
       const shuffledData = [...trainingData].sort(() => Math.random() - 0.5);
       
+      let sampleCount = 0;
       for (const sample of shuffledData) {
+        // Add delay every 10 samples to prevent blocking
+        if (sampleCount % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1));
+        }
+        sampleCount++;
+        
         const features = sample.features;
         const emotionIndex = this.emotions.indexOf(sample.emotion);
         
@@ -72,8 +79,10 @@ export class EmotionModel {
         this.backward(features, hiddenOutput, finalOutput, target, learningRate);
       }
       
-      if (epoch % 10 === 0) {
+      if (epoch % 5 === 0) {
         console.log(`Epoch ${epoch}, Average Loss: ${(totalLoss / trainingData.length).toFixed(4)}`);
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
     

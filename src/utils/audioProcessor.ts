@@ -2,6 +2,7 @@
 export class AudioProcessor {
   private audioContext: AudioContext;
   private analyser: AnalyserNode;
+  private isProcessing: boolean = false;
 
   constructor() {
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -9,19 +10,36 @@ export class AudioProcessor {
     this.analyser.fftSize = 2048;
   }
 
+  // Add delay to prevent blocking
+  private async delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   // Extract MFCC features from audio buffer
   async extractMFCC(audioBuffer: AudioBuffer): Promise<number[][]> {
+    if (this.isProcessing) {
+      throw new Error('Audio processing already in progress');
+    }
+    
+    this.isProcessing = true;
+    
+    try {
     const channelData = audioBuffer.getChannelData(0);
     const sampleRate = audioBuffer.sampleRate;
     
     // Frame the signal
     const frameLength = Math.floor(0.025 * sampleRate); // 25ms frames
     const hopLength = Math.floor(0.01 * sampleRate); // 10ms hop
-    const numFrames = Math.floor((channelData.length - frameLength) / hopLength) + 1;
+      const numFrames = Math.min(100, Math.floor((channelData.length - frameLength) / hopLength) + 1); // Limit frames
     
     const mfccFeatures: number[][] = [];
     
     for (let i = 0; i < numFrames; i++) {
+        // Add delay every 10 frames to prevent blocking
+        if (i % 10 === 0) {
+          await this.delay(1);
+        }
+        
       const start = i * hopLength;
       const frame = channelData.slice(start, start + frameLength);
       
@@ -29,7 +47,7 @@ export class AudioProcessor {
       const windowedFrame = this.applyHammingWindow(frame);
       
       // Compute FFT
-      const fft = this.computeFFT(windowedFrame);
+        const fft = this.computeSimplifiedFFT(windowedFrame);
       
       // Apply mel filter bank
       const melSpectrum = this.applyMelFilterBank(fft, sampleRate);
@@ -40,13 +58,21 @@ export class AudioProcessor {
       mfccFeatures.push(mfcc.slice(0, 13)); // Take first 13 coefficients
     }
     
+      this.isProcessing = false;
     return mfccFeatures;
+    } catch (error) {
+      this.isProcessing = false;
+      throw error;
+    }
   }
 
   // Extract spectral features
   extractSpectralFeatures(audioBuffer: AudioBuffer): number[] {
     const channelData = audioBuffer.getChannelData(0);
-    const fft = this.computeFFT(channelData);
+    // Use smaller sample for faster processing
+    const sampleSize = Math.min(1024, channelData.length);
+    const sample = channelData.slice(0, sampleSize);
+    const fft = this.computeSimplifiedFFT(sample);
     const magnitude = fft.map(complex => Math.sqrt(complex.real * complex.real + complex.imag * complex.imag));
     
     // Spectral centroid
@@ -56,17 +82,19 @@ export class AudioProcessor {
     const spectralRolloff = this.computeSpectralRolloff(magnitude);
     
     // Zero crossing rate
-    const zcr = this.computeZeroCrossingRate(channelData);
+    const zcr = this.computeZeroCrossingRate(sample);
     
     // RMS energy
-    const rmsEnergy = this.computeRMSEnergy(channelData);
+    const rmsEnergy = this.computeRMSEnergy(sample);
     
     return [spectralCentroid, spectralRolloff, zcr, rmsEnergy];
   }
 
   // Extract prosodic features (pitch, rhythm)
   extractProsodicFeatures(audioBuffer: AudioBuffer): number[] {
-    const channelData = audioBuffer.getChannelData(0);
+    // Use smaller sample for faster processing
+    const sampleSize = Math.min(2048, audioBuffer.getChannelData(0).length);
+    const channelData = audioBuffer.getChannelData(0).slice(0, sampleSize);
     const sampleRate = audioBuffer.sampleRate;
     
     // Fundamental frequency (F0) estimation using autocorrelation
@@ -89,16 +117,18 @@ export class AudioProcessor {
     return windowed;
   }
 
-  private computeFFT(signal: Float32Array): { real: number; imag: number }[] {
-    // Simplified FFT implementation (in production, use a proper FFT library)
+  private computeSimplifiedFFT(signal: Float32Array): { real: number; imag: number }[] {
+    // Very simplified FFT for demo purposes - much faster
     const N = signal.length;
     const result: { real: number; imag: number }[] = [];
+    const maxK = Math.min(N, 256); // Limit frequency bins for performance
     
-    for (let k = 0; k < N; k++) {
+    for (let k = 0; k < maxK; k++) {
       let real = 0;
       let imag = 0;
       
-      for (let n = 0; n < N; n++) {
+      const step = Math.max(1, Math.floor(N / 64)); // Sample every nth point
+      for (let n = 0; n < N; n += step) {
         const angle = -2 * Math.PI * k * n / N;
         real += signal[n] * Math.cos(angle);
         imag += signal[n] * Math.sin(angle);
