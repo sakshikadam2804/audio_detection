@@ -1,13 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileAudio, Play, BarChart3 } from 'lucide-react';
+import { Upload, FileAudio, Play, BarChart3, CheckCircle } from 'lucide-react';
 import { AudioProcessor } from '../utils/audioProcessor';
 import { EmotionModel } from '../utils/emotionModel';
+import { useAudio } from '../contexts/AudioContext';
 
-interface AudioFileUploadProps {
-  onPredictionComplete: (result: any) => void;
-}
-
-export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploadProps) {
+export default function AudioFileUpload() {
+  const { addRecording, isModelTrained } = useAudio();
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string>('');
@@ -41,6 +39,7 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
     setUploadedFile(file);
     setAudioUrl(URL.createObjectURL(file));
     setIsProcessing(true);
+    setPredictionResult(null);
 
     try {
       // Process the audio file
@@ -86,7 +85,7 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
       };
 
       setPredictionResult(result);
-      onPredictionComplete(result);
+      addRecording(result);
       
     } catch (error) {
       console.error('Error processing audio file:', error);
@@ -110,16 +109,18 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
     let cumulativePercentage = 0;
     
     return (
-      <div className="flex items-center space-x-6">
-        <div className="relative w-32 h-32">
-          <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 100 100">
+      <div className="flex items-center justify-center space-x-8">
+        <div className="relative w-40 h-40">
+          <svg className="w-40 h-40 transform -rotate-90" viewBox="0 0 100 100">
             {probabilities.map((prob, index) => {
               const percentage = prob * 100;
+              if (percentage < 1) return null;
+              
               const strokeDasharray = `${percentage} ${100 - percentage}`;
               const strokeDashoffset = -cumulativePercentage;
               cumulativePercentage += percentage;
               
-              return percentage > 1 ? (
+              return (
                 <circle
                   key={index}
                   cx="50"
@@ -127,31 +128,31 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
                   r="15.915"
                   fill="transparent"
                   stroke={colors[index]}
-                  strokeWidth="4"
+                  strokeWidth="6"
                   strokeDasharray={strokeDasharray}
                   strokeDashoffset={strokeDashoffset}
                   className="transition-all duration-500"
                 />
-              ) : null;
+              );
             })}
           </svg>
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
-              <p className="text-white font-bold text-sm capitalize">{predictionResult?.emotion}</p>
-              <p className="text-gray-400 text-xs">{(predictionResult?.confidence * 100).toFixed(1)}%</p>
+              <p className="text-white font-bold text-lg capitalize">{predictionResult?.emotion}</p>
+              <p className="text-gray-400 text-sm">{(predictionResult?.confidence * 100).toFixed(1)}%</p>
             </div>
           </div>
         </div>
         
         <div className="space-y-2">
           {emotions.map((emotion, index) => (
-            <div key={emotion} className="flex items-center space-x-2">
+            <div key={emotion} className="flex items-center space-x-3">
               <div 
-                className="w-3 h-3 rounded-full" 
+                className="w-4 h-4 rounded-full" 
                 style={{ backgroundColor: colors[index] }}
               ></div>
-              <span className="text-gray-300 text-sm capitalize">{emotion}</span>
-              <span className="text-gray-400 text-sm">
+              <span className="text-gray-300 text-sm capitalize w-16">{emotion}</span>
+              <span className="text-gray-400 text-sm font-mono">
                 {(probabilities[index] * 100).toFixed(1)}%
               </span>
             </div>
@@ -180,28 +181,56 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
 
         <div
           onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
             isProcessing
               ? 'border-blue-500 bg-blue-500/10'
+              : predictionResult
+              ? 'border-green-500 bg-green-500/10'
               : 'border-gray-600 bg-gray-700/50 hover:border-purple-500 hover:bg-purple-500/5'
           }`}
         >
           <div className="flex flex-col items-center space-y-3">
             {isProcessing ? (
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+            ) : predictionResult ? (
+              <CheckCircle className="text-green-500" size={48} />
             ) : (
               <Upload className="text-gray-400" size={48} />
             )}
 
             <div>
               <p className="text-white font-medium">
-                {isProcessing ? 'Processing Audio...' : 'Upload Audio File for Emotion Prediction'}
+                {isProcessing 
+                  ? 'Processing Audio...' 
+                  : predictionResult
+                  ? 'Audio Processed Successfully!'
+                  : 'Upload Audio File for Emotion Prediction'
+                }
               </p>
               <p className="text-gray-400 text-sm mt-1">
-                {isProcessing ? 'Analyzing audio features...' : 'Supports WAV, MP3, M4A, and other audio formats'}
+                {isProcessing 
+                  ? 'Analyzing audio features and predicting emotion...' 
+                  : 'Supports WAV, MP3, M4A, and other audio formats'
+                }
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Model Status */}
+        <div className={`p-3 rounded-lg border ${
+          isModelTrained 
+            ? 'border-green-500/30 bg-green-500/10' 
+            : 'border-orange-500/30 bg-orange-500/10'
+        }`}>
+          <p className={`text-sm ${
+            isModelTrained ? 'text-green-400' : 'text-orange-400'
+          }`}>
+            {isModelTrained 
+              ? '✓ Using trained neural network for prediction'
+              : '⚠ Using rule-based prediction - Upload RAVDESS dataset for better accuracy'
+            }
+          </p>
         </div>
 
         {/* Uploaded File Info */}
@@ -231,7 +260,7 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
         {predictionResult && (
           <div className="space-y-6">
             <div className="bg-gray-700/50 rounded-lg p-6">
-              <h3 className="text-lg font-medium text-white mb-4 flex items-center space-x-2">
+              <h3 className="text-lg font-medium text-white mb-6 flex items-center space-x-2">
                 <BarChart3 size={20} />
                 <span>Emotion Prediction Results</span>
               </h3>
@@ -242,12 +271,12 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
             {/* Waveform Visualization */}
             <div className="bg-gray-700/50 rounded-lg p-4">
               <h4 className="text-white font-medium mb-3">Audio Waveform</h4>
-              <div className="flex items-end space-x-1 h-16 bg-gray-900 rounded p-2">
+              <div className="flex items-end space-x-1 h-20 bg-gray-900 rounded p-2">
                 {predictionResult.waveform.map((amplitude: number, index: number) => (
                   <div
                     key={index}
                     className="bg-purple-500 w-1 rounded-t transition-all duration-300"
-                    style={{ height: `${Math.max(2, amplitude * 100)}%` }}
+                    style={{ height: `${Math.max(4, amplitude * 100)}%` }}
                   ></div>
                 ))}
               </div>
@@ -257,8 +286,9 @@ export default function AudioFileUpload({ onPredictionComplete }: AudioFileUploa
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
               <p className="text-blue-400 text-sm">
                 <strong>Model:</strong> {predictionResult.modelUsed}<br/>
-                <strong>Processing Time:</strong> Real-time feature extraction and prediction<br/>
-                <strong>Features Used:</strong> MFCC, Spectral, and Prosodic features
+                <strong>Processing:</strong> Real-time feature extraction and neural network prediction<br/>
+                <strong>Features:</strong> MFCC (13), Spectral (4), Prosodic (3) = 20 total features<br/>
+                <strong>Duration:</strong> {predictionResult.duration.toFixed(2)} seconds
               </p>
             </div>
           </div>

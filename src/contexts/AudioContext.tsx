@@ -9,7 +9,7 @@ export interface AudioRecording {
   audioUrl: string;
   waveform: number[];
   modelUsed: string;
-  probabilities?: number[];
+  probabilities: number[];
   fileName?: string;
   fileSize?: number;
 }
@@ -28,10 +28,12 @@ export interface DatasetFile {
 interface AudioContextType {
   currentEmotion: string | null;
   currentConfidence: number;
+  currentProbabilities: number[];
   recordings: AudioRecording[];
   datasetFiles: DatasetFile[];
   isRecording: boolean;
   isAnalyzing: boolean;
+  isModelTrained: boolean;
   startRecording: () => void;
   stopRecording: () => void;
   addRecording: (recording: AudioRecording) => void;
@@ -39,66 +41,91 @@ interface AudioContextType {
   setDatasetFiles: (files: DatasetFile[]) => void;
   startAnalysis: () => void;
   stopAnalysis: () => void;
+  setCurrentEmotion: (emotion: string, confidence: number, probabilities: number[]) => void;
+  setModelTrained: (trained: boolean) => void;
 }
 
 const AudioContext = createContext<AudioContextType | null>(null);
 
-const emotions = ['neutral', 'calm', 'happy', 'sad', 'angry', 'fearful', 'disgust', 'surprised'];
-
-function generateMockEmotion() {
-  const emotionWeights = {
-    neutral: 25,
-    calm: 20,
-    happy: 15,
-    sad: 12,
-    angry: 8,
-    fearful: 6,
-    disgust: 5,
-    surprised: 9
-  };
-
-  const totalWeight = Object.values(emotionWeights).reduce((sum, weight) => sum + weight, 0);
-  let random = Math.random() * totalWeight;
-
-  for (const [emotion, weight] of Object.entries(emotionWeights)) {
-    random -= weight;
-    if (random <= 0) {
-      return {
-        emotion,
-        confidence: 0.65 + Math.random() * 0.3
-      };
-    }
-  }
-
-  return { emotion: 'neutral', confidence: 0.8 };
-}
+const STORAGE_KEYS = {
+  RECORDINGS: 'audioEmotionRecordings',
+  DATASET_FILES: 'audioEmotionDatasetFiles',
+  MODEL_TRAINED: 'audioEmotionModelTrained'
+};
 
 export default function AudioContextProvider({ children }: { children: React.ReactNode }) {
-  const [currentEmotion, setCurrentEmotion] = useState<string | null>(null);
+  const [currentEmotion, setCurrentEmotionState] = useState<string | null>(null);
   const [currentConfidence, setCurrentConfidence] = useState(0);
+  const [currentProbabilities, setCurrentProbabilities] = useState<number[]>([]);
   const [recordings, setRecordings] = useState<AudioRecording[]>([]);
-  const [datasetFiles, setDatasetFiles] = useState<DatasetFile[]>([]);
+  const [datasetFiles, setDatasetFilesState] = useState<DatasetFile[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isModelTrained, setIsModelTrained] = useState(false);
 
+  // Load data from localStorage on mount
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isAnalyzing) {
-      interval = setInterval(() => {
-        const prediction = generateMockEmotion();
-        setCurrentEmotion(prediction.emotion);
-        setCurrentConfidence(prediction.confidence);
-      }, 1500);
+    const savedRecordings = localStorage.getItem(STORAGE_KEYS.RECORDINGS);
+    const savedDatasetFiles = localStorage.getItem(STORAGE_KEYS.DATASET_FILES);
+    const savedModelTrained = localStorage.getItem(STORAGE_KEYS.MODEL_TRAINED);
+
+    if (savedRecordings) {
+      try {
+        setRecordings(JSON.parse(savedRecordings));
+      } catch (error) {
+        console.error('Error loading recordings:', error);
+      }
     }
 
-    return () => clearInterval(interval);
-  }, [isAnalyzing]);
+    if (savedDatasetFiles) {
+      try {
+        setDatasetFilesState(JSON.parse(savedDatasetFiles));
+      } catch (error) {
+        console.error('Error loading dataset files:', error);
+      }
+    }
 
-  const startRecording = () => setIsRecording(true);
-  const stopRecording = () => setIsRecording(false);
-  const startAnalysis = () => setIsAnalyzing(true);
-  const stopAnalysis = () => setIsAnalyzing(false);
+    if (savedModelTrained) {
+      setIsModelTrained(JSON.parse(savedModelTrained));
+    }
+  }, []);
+
+  // Save recordings to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.RECORDINGS, JSON.stringify(recordings));
+  }, [recordings]);
+
+  // Save dataset files to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.DATASET_FILES, JSON.stringify(datasetFiles));
+  }, [datasetFiles]);
+
+  // Save model trained status
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.MODEL_TRAINED, JSON.stringify(isModelTrained));
+  }, [isModelTrained]);
+
+  const startRecording = () => {
+    setIsRecording(true);
+    setIsAnalyzing(false); // Stop analysis when recording starts
+  };
+
+  const stopRecording = () => {
+    setIsRecording(false);
+  };
+
+  const startAnalysis = () => {
+    if (!isRecording) { // Only start analysis if not recording
+      setIsAnalyzing(true);
+    }
+  };
+
+  const stopAnalysis = () => {
+    setIsAnalyzing(false);
+    setCurrentEmotionState(null);
+    setCurrentConfidence(0);
+    setCurrentProbabilities([]);
+  };
 
   const addRecording = (recording: AudioRecording) => {
     setRecordings(prev => [recording, ...prev]);
@@ -108,21 +135,39 @@ export default function AudioContextProvider({ children }: { children: React.Rea
     setRecordings(prev => prev.filter(r => r.id !== id));
   };
 
+  const setDatasetFiles = (files: DatasetFile[]) => {
+    setDatasetFilesState(files);
+  };
+
+  const setCurrentEmotion = (emotion: string, confidence: number, probabilities: number[]) => {
+    setCurrentEmotionState(emotion);
+    setCurrentConfidence(confidence);
+    setCurrentProbabilities(probabilities);
+  };
+
+  const setModelTrained = (trained: boolean) => {
+    setIsModelTrained(trained);
+  };
+
   return (
     <AudioContext.Provider value={{
       currentEmotion,
       currentConfidence,
+      currentProbabilities,
       recordings,
       datasetFiles,
       isRecording,
       isAnalyzing,
+      isModelTrained,
       startRecording,
       stopRecording,
       addRecording,
       deleteRecording,
       setDatasetFiles,
       startAnalysis,
-      stopAnalysis
+      stopAnalysis,
+      setCurrentEmotion,
+      setModelTrained
     }}>
       {children}
     </AudioContext.Provider>

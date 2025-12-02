@@ -1,45 +1,37 @@
 import React, { useState } from 'react';
-import { History, Play, Download, Trash2, Calendar, Clock, Mic } from 'lucide-react';
+import { History, Play, Download, Trash2, Calendar, Clock, Mic, BarChart3 } from 'lucide-react';
+import { useAudio } from '../contexts/AudioContext';
 
-interface Recording {
-  id: string;
-  timestamp: number;
-  duration: number;
-  emotion: string;
-  confidence: number;
-  audioUrl: string;
-  waveform: number[];
-  modelUsed: string;
-  probabilities?: number[];
-  fileName?: string;
-  fileSize?: number;
-}
-
-interface RecordingHistoryProps {
-  recordings: Recording[];
-  onPlayRecording: (recording: Recording) => void;
-  onDeleteRecording: (id: string) => void;
-  onDownloadRecording: (recording: Recording) => void;
-}
-
-export default function RecordingHistory({ 
-  recordings, 
-  onPlayRecording, 
-  onDeleteRecording, 
-  onDownloadRecording 
-}: RecordingHistoryProps) {
+export default function RecordingHistory() {
+  const { recordings, deleteRecording } = useAudio();
   const [selectedRecording, setSelectedRecording] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'timestamp' | 'emotion' | 'confidence'>('timestamp');
 
   const exportData = () => {
+    if (recordings.length === 0) {
+      alert('No recordings to export');
+      return;
+    }
+
     const dataToExport = recordings.map(recording => ({
+      id: recording.id,
       timestamp: new Date(recording.timestamp).toISOString(),
       emotion: recording.emotion,
       confidence: recording.confidence,
       duration: recording.duration,
       modelUsed: recording.modelUsed,
       fileName: recording.fileName || 'recorded_audio',
-      probabilities: recording.probabilities
+      probabilities: recording.probabilities,
+      emotionBreakdown: {
+        neutral: recording.probabilities[0],
+        calm: recording.probabilities[1],
+        happy: recording.probabilities[2],
+        sad: recording.probabilities[3],
+        angry: recording.probabilities[4],
+        fearful: recording.probabilities[5],
+        disgust: recording.probabilities[6],
+        surprised: recording.probabilities[7]
+      }
     }));
 
     const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
@@ -47,9 +39,33 @@ export default function RecordingHistory({
     const link = document.createElement('a');
     link.href = url;
     link.download = `emotion_analysis_export_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  const handlePlayRecording = (recording: any) => {
+    if (recording.audioUrl) {
+      const audio = new Audio(recording.audioUrl);
+      audio.play().catch(error => {
+        console.error('Error playing audio:', error);
+        alert('Error playing audio file');
+      });
+    }
+  };
+
+  const handleDownloadRecording = (recording: any) => {
+    if (recording.audioUrl) {
+      const link = document.createElement('a');
+      link.href = recording.audioUrl;
+      link.download = `emotion_recording_${recording.emotion}_${new Date(recording.timestamp).toISOString().replace(/[:.]/g, '-')}.wav`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   const emotionColors: Record<string, string> = {
     happy: 'text-green-400 bg-green-500/10',
     sad: 'text-blue-400 bg-blue-500/10',
@@ -91,11 +107,32 @@ export default function RecordingHistory({
         <div
           key={index}
           className="bg-blue-500 w-1 rounded-t"
-          style={{ height: `${Math.max(2, amplitude * 100)}%` }}
+          style={{ height: `${Math.max(4, amplitude * 100)}%` }}
         ></div>
       ))}
     </div>
   );
+
+  const EmotionMiniChart = ({ probabilities }: { probabilities: number[] }) => {
+    const emotions = ['neutral', 'calm', 'happy', 'sad', 'angry', 'fearful', 'disgust', 'surprised'];
+    const colors = ['#6B7280', '#14B8A6', '#10B981', '#3B82F6', '#EF4444', '#8B5CF6', '#EC4899', '#F59E0B'];
+    
+    return (
+      <div className="flex space-x-1">
+        {probabilities.map((prob, index) => (
+          <div
+            key={index}
+            className="w-2 rounded-t"
+            style={{ 
+              height: `${Math.max(4, prob * 32)}px`,
+              backgroundColor: colors[index]
+            }}
+            title={`${emotions[index]}: ${(prob * 100).toFixed(1)}%`}
+          ></div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
@@ -103,15 +140,8 @@ export default function RecordingHistory({
         <h2 className="text-xl font-bold text-white flex items-center space-x-2">
           <History className="text-amber-500" size={24} />
           <span>Recording History</span>
-          <button
-            onClick={exportData}
-            className="ml-auto px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
-            disabled={recordings.length === 0}
-          >
-            Export Data
-          </button>
         </h2>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-3">
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as any)}
@@ -121,6 +151,13 @@ export default function RecordingHistory({
             <option value="emotion">Sort by Emotion</option>
             <option value="confidence">Sort by Confidence</option>
           </select>
+          <button
+            onClick={exportData}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={recordings.length === 0}
+          >
+            Export Data
+          </button>
         </div>
       </div>
 
@@ -128,7 +165,7 @@ export default function RecordingHistory({
         <div className="text-center py-12">
           <Mic className="mx-auto text-gray-500 mb-4" size={48} />
           <p className="text-gray-400">No recordings yet</p>
-          <p className="text-gray-500 text-sm mt-2">Start recording to see your history</p>
+          <p className="text-gray-500 text-sm mt-2">Start recording or upload audio files to see your history</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -151,8 +188,8 @@ export default function RecordingHistory({
                   </div>
                   
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-3 mb-1">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    <div className="flex items-center space-x-3 mb-2">
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                         emotionColors[recording.emotion] || 'text-gray-400 bg-gray-500/10'
                       }`}>
                         {recording.emotion}
@@ -178,33 +215,42 @@ export default function RecordingHistory({
                       </span>
                     </div>
                   </div>
+
+                  <div className="flex-shrink-0">
+                    <EmotionMiniChart probabilities={recording.probabilities} />
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onPlayRecording(recording);
+                      handlePlayRecording(recording);
                     }}
                     className="p-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+                    title="Play Recording"
                   >
                     <Play size={16} />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDownloadRecording(recording);
+                      handleDownloadRecording(recording);
                     }}
                     className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    title="Download Recording"
                   >
                     <Download size={16} />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteRecording(recording.id);
+                      if (confirm('Are you sure you want to delete this recording?')) {
+                        deleteRecording(recording.id);
+                      }
                     }}
                     className="p-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                    title="Delete Recording"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -213,45 +259,61 @@ export default function RecordingHistory({
 
               {selectedRecording === recording.id && (
                 <div className="mt-4 pt-4 border-t border-gray-600">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-400">Model Used:</span>
-                      <span className="text-white ml-2">{recording.modelUsed}</span>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Detailed Information */}
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-white">Recording Details</h4>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <span className="text-gray-400">Model Used:</span>
+                          <span className="text-white ml-2 block">{recording.modelUsed}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">File Size:</span>
+                          <span className="text-white ml-2">
+                            {recording.fileSize 
+                              ? `${(recording.fileSize / 1024).toFixed(1)} KB`
+                              : `${(recording.duration * 44100 * 2 / 1024).toFixed(1)} KB`
+                            }
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-gray-400">File Size:</span>
-                      <span className="text-white ml-2">
-                        {recording.fileSize 
-                          ? `${(recording.fileSize / 1024).toFixed(1)} KB`
-                          : `${(recording.duration * 44100 * 2 / 1024).toFixed(1)} KB`
-                        }
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* Emotion Probabilities */}
-                  {recording.probabilities && (
-                    <div className="mt-3">
-                      <span className="text-gray-400 text-sm">Emotion Probabilities:</span>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+
+                    {/* Emotion Probabilities */}
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-white flex items-center space-x-2">
+                        <BarChart3 size={16} />
+                        <span>Emotion Probabilities</span>
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
                         {['neutral', 'calm', 'happy', 'sad', 'angry', 'fearful', 'disgust', 'surprised'].map((emotion, index) => (
-                          <div key={emotion} className="flex justify-between">
+                          <div key={emotion} className="flex justify-between items-center">
                             <span className="text-gray-300 capitalize">{emotion}:</span>
-                            <span className="text-gray-400">{(recording.probabilities![index] * 100).toFixed(1)}%</span>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-gray-400">{((recording.probabilities[index] || 0) * 100).toFixed(1)}%</span>
+                              <div className="w-8 bg-gray-700 rounded-full h-1">
+                                <div 
+                                  className="h-1 bg-blue-500 rounded-full"
+                                  style={{ width: `${(recording.probabilities[index] || 0) * 100}%` }}
+                                ></div>
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
                     </div>
-                  )}
+                  </div>
                   
-                  <div className="mt-3">
-                    <span className="text-gray-400 text-sm">Full Waveform:</span>
-                    <div className="mt-2 flex items-end space-x-0.5 h-16 bg-gray-900 rounded p-2">
+                  {/* Full Waveform */}
+                  <div className="mt-4">
+                    <h4 className="font-medium text-white mb-2">Audio Waveform</h4>
+                    <div className="flex items-end space-x-0.5 h-16 bg-gray-900 rounded p-2">
                       {recording.waveform.map((amplitude, index) => (
                         <div
                           key={index}
                           className="bg-blue-500 w-1 rounded-t"
-                          style={{ height: `${Math.max(2, amplitude * 100)}%` }}
+                          style={{ height: `${Math.max(4, amplitude * 100)}%` }}
                         ></div>
                       ))}
                     </div>
